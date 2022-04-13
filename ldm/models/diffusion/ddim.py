@@ -71,6 +71,8 @@ class DDIMSampler(object):
                corrector_kwargs=None,
                verbose=True,
                x_T=None,
+               init_img=None,
+               starting_step=0,
                log_every_t=100,
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
@@ -103,6 +105,8 @@ class DDIMSampler(object):
                                                     score_corrector=score_corrector,
                                                     corrector_kwargs=corrector_kwargs,
                                                     x_T=x_T,
+                                                    init_img=init_img,
+                                                    starting_step=starting_step,
                                                     log_every_t=log_every_t,
                                                     unconditional_guidance_scale=unconditional_guidance_scale,
                                                     unconditional_conditioning=unconditional_conditioning,
@@ -111,17 +115,20 @@ class DDIMSampler(object):
 
     @torch.no_grad()
     def ddim_sampling(self, cond, shape,
-                      x_T=None, ddim_use_original_steps=False,
+                      x_T=None, ddim_use_original_steps=False, init_img=None, starting_step=0,
                       callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, log_every_t=100,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,):
         device = self.model.betas.device
         b = shape[0]
-        if x_T is None:
+        if x_T is None and init_img is None:
             img = torch.randn(shape, device=device)
-        else:
+        elif x_T is not None:
             img = x_T
+        else:
+            index = self.ddim_timesteps.shape[0] - starting_step - 1
+            img = init_img * self.ddim_alphas[index] + torch.randn(shape, device=device) * self.ddim_sqrt_one_minus_alphas[index]
 
         if timesteps is None:
             timesteps = self.ddpm_num_timesteps if ddim_use_original_steps else self.ddim_timesteps
@@ -131,7 +138,8 @@ class DDIMSampler(object):
 
         intermediates = {'x_inter': [img], 'pred_x0': [img]}
         time_range = reversed(range(0,timesteps)) if ddim_use_original_steps else np.flip(timesteps)
-        total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
+        time_range = time_range[starting_step:]
+        total_steps = timesteps if ddim_use_original_steps else time_range.shape[0]
         print(f"Running DDIM Sampling with {total_steps} timesteps")
 
         iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
